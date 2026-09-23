@@ -31,20 +31,41 @@ Examples of trigger phrases:
 
 ## How to Run a Scrape
 
+### Step 0 (always): Resolve the correct URL first
+
+Before running `scraper.py`, run `find_url.py` to identify the correct ATS URL:
+
 ```powershell
-cd C:\Users\stark\Desktop\Utility\jobs
-python scraper.py --url "<filtered_career_url>" --output jobs_raw.json
+python find_url.py --company "EXL Service" --location "Gurugram"
+```
+
+This pings ~15 candidate ATS URLs in parallel and returns a ranked confidence table:
+- **HIGH** (✅) — 200 OK + body confirms careers page. Use this URL.
+- **MEDIUM** (⚠️) — 200 OK but couldn't fully confirm. Try in scraper, user can adjust.
+- **LOW** (🔸) — Redirected to wrong domain or suspicious.
+- **DEAD** (❌) — 404 or connection error.
+
+Pick the **best HIGH or MEDIUM** URL and pass it to `scraper.py`.
+
+If **NO_URL_FOUND** or all results are DEAD/LOW: **ask the user in chat**:
+> "I couldn't find the careers page URL for [company] automatically. Could you paste the link to their jobs page? (e.g. the URL you see when you're on their careers/jobs listing)"
+
+No shame — Oracle HCM, custom ATS tenants, and internal portals are not guessable. The user knows the URL. Once they paste it, run `scraper.py` immediately with that URL.
+
+### Step 1: Run the scraper
+
+```powershell
+python scraper.py --url "<url-from-find_url>" --company "EXL" --output jobs_raw.json
 ```
 
 Run as a background task (`IsDaemon=false`, `WaitMsBeforeAsync=5000`).
 
-### Constructing the URL & Defaults
+### URL Defaults
 - **Default Location**: Always default to **India** (Gurgaon, Pune, Bengaluru, Hyderabad, Noida, Chennai, etc.) unless the user explicitly specifies another country.
 - **Default Experience Level**: Target **Fresher / 0 years experience** (0-2 years entry-level).
 - Embed filters directly in the URL where possible (e.g., `?location=India&...`).
 - For ZS Careers, use: `https://jobs.zs.com/all/jobs?location=India&woe=12&regionCode=IN`
 - For United Airlines (Phenom/Workday), use filtered India careers page URL.
-- For other companies, inspect the URL after applying filters.
 
 ---
 
@@ -95,7 +116,7 @@ Always include the direct job URL as the Apply link.
 > - `"at least 6 months - 2 year experience"`
 > - `"0-2 years"`, `"2+ years"`, `"entry level"`, `"fresh graduate"`
 > - If no pattern is found, label as **Unknown** — do NOT guess.
-> Run `analyze.py` (see Files section) to extract this automatically.
+> Run `python analyze.py --input jobs_raw.json` (Note: use `--input`, NOT `--file`) to extract this automatically.
 
 ---
 
@@ -125,8 +146,10 @@ Agent: Reads file, matches against criteria, posts result table in chat
 
 | File | Purpose |
 |------|---------|
+| `find_url.py` | Pre-scrape URL resolver — pings candidate ATS URLs, returns best match |
 | `scraper.py` | Main scraper — Playwright + async parallel fetch |
 | `analyze.py` | Post-scrape analyzer — extracts exact YOE from description text, outputs ranked table + markdown |
+| `launch.py` | Windows launcher — spawns scraper in visible console, tails log |
 | `requirements.txt` | `playwright`, `aiohttp` |
 | `jobs_raw.json` | Output from latest scrape run |
 | `README.md` | User-facing guide |
@@ -158,9 +181,9 @@ Agent: Reads file, matches against criteria, posts result table in chat
 - No login wall on job detail pages
 - Use URL: `https://jobs.zs.com/all/jobs?location=India&woe=12&regionCode=IN`
 
-### EXL Service (jobs.exlservice.com)
-- Uses Eightfold AI ATS
-- Career portal: `https://jobs.exlservice.com/`
-- For India/Gurugram/Noida, use: `https://jobs.exlservice.com/?location=Gurugram%2C+Haryana%2C+India&location=Noida%2C+Uttar+Pradesh%2C+India`
-- Job URLs follow pattern: `https://jobs.exlservice.com/jobs/<id>`
-- Eightfold renders via JS — use networkidle + body text polling fallback
+### EXL Service (Oracle HCM)
+- Uses **Oracle HCM** ATS (not SmartRecruiters or Eightfold)
+- Correct India URL: `https://fa-ewjt-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2/jobs?location=India&locationId=300000000467203&locationLevel=country&mode=job-location`
+- Oracle HCM tenant subdomains (`fa-<id>.fa.ocs.oraclecloud.com`) are NOT guessable from company name — must be known in advance
+- `www.exlservice.com/careers` is just a redirect to the Oracle portal
+- **SmartRecruiters false positive**: `careers.smartrecruiters.com/<slug>` returns HTTP 200 for ANY slug even if company has no jobs there — do not trust SmartRecruiters HIGH confidence blindly; verify body has actual job listings

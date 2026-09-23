@@ -31,43 +31,50 @@ def extract_experience(description: str) -> tuple:
     Returns (-1, -1, 'Unknown') if no pattern matched.
     """
     text = description.lower()
+    # Normalize unicode hyphens/dashes to standard ASCII hyphen
+    text = re.sub(r'[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]', '-', text)
 
     # UAL Phenom ATS format: "Experience: 1+ year"
-    m = re.search(r'experience:\s*(\d+)\s*\+?\s*year', text)
+    m = re.search(r'experience:\s*(\d+)\s*\+?\s*years?', text)
     if m:
         n = int(m.group(1))
         return (n, 99, f"{n}+ yr")
 
-    patterns = [
-        (r'\bno experience required\b',                      (0, 0,  "No exp required")),
-        (r'\bentry[- ]level\b',                               (0, 1,  "Entry level")),
-        (r'\bfresh\s*grad',                                   (0, 0,  "Fresh grad")),
-        (r'\b0\s*[-to]+\s*1\s*year',                          (0, 1,  "0-1 yr")),
-        (r'\b0\s*[-to]+\s*2\s*year',                          (0, 2,  "0-2 yrs")),
-        (r'\b0\s*[-to]+\s*3\s*year',                          (0, 3,  "0-3 yrs")),
-        (r'at least\s+6\s+months?\s*[-]+\s*2\s+year',        (0, 2,  "6mo-2 yrs")),
-        (r'6\s+months?\s*[-]+\s*2\s+year',                   (0, 2,  "6mo-2 yrs")),
-        (r'\b1\s*[-to]+\s*2\s*year',                          (1, 2,  "1-2 yrs")),
-        (r'\b1\s*[-to]+\s*3\s*year',                          (1, 3,  "1-3 yrs")),
-        (r'(?:at least\s+)?1\s*\+\s*year',                    (1, 99, "1+ yr")),
-        (r'\b1\s+or\s+more\s+year',                           (1, 99, "1+ yr")),
-        (r'(?:at least\s+)?2\s*\+\s*year',                    (2, 99, "2+ yrs")),
-        (r'\b2\s+or\s+more\s+year',                           (2, 99, "2+ yrs")),
-        (r'\b2\s*[-to]+\s*3\s*year',                          (2, 3,  "2-3 yrs")),
-        (r'\b2\s*[-to]+\s*4\s*year',                          (2, 4,  "2-4 yrs")),
-        (r'at least\s+2\s+year',                              (2, 99, "2+ yrs")),
-        (r'(?:at least\s+)?3\s*\+\s*year',                    (3, 99, "3+ yrs")),
-        (r'\b3\s*[-to]+\s*5\s*year',                          (3, 5,  "3-5 yrs")),
-        (r'(?:at least\s+)?5\s*\+\s*year',                    (5, 99, "5+ yrs")),
-        (r'(?:at least\s+)?6\s*\+\s*year',                    (6, 99, "6+ yrs")),
-    ]
+    # 1) Range starting with 0 (e.g. 0-1 yr, 0-2 yrs, 0-3+ yrs, 0 to 3 years)
+    m = re.search(r'\b0\s*(?:-|to|\bto\b)\s*(\d+)\s*\+?\s*years?', text)
+    if m:
+        max_yoe = int(m.group(1))
+        return (0, max_yoe, f"0-{max_yoe} yrs")
 
-    for pattern, result in patterns:
-        if re.search(pattern, text, re.IGNORECASE):
-            return result
+    # 2) Fresh grad / entry level / no experience
+    if re.search(r'\b(?:no experience required|entry[- ]level|fresh\s*grad|fresher)\b', text):
+        return (0, 1, "0-1 yr")
 
-    # Catch any "N+ years" we might have missed
-    m = re.search(r'\b(\d+)\s*\+\s*year', text)
+    # 3) Month ranges (e.g., 6 months - 2 years)
+    if re.search(r'6\s*months?\s*-\s*2\s*years?', text) or re.search(r'at least\s+6\s+months?', text):
+        return (0, 2, "6mo-2 yrs")
+
+    # 4) Any general range: N1 - N2 years (e.g. 1-3, 3-6, 5-8, 8-10, 10-15, 3-5+ years)
+    m = re.search(r'\b(\d+)\s*(?:-|to|\bto\b)\s*(\d+)\s*\+?\s*years?', text)
+    if m:
+        min_yoe = int(m.group(1))
+        max_yoe = int(m.group(2))
+        return (min_yoe, max_yoe, f"{min_yoe}-{max_yoe} yrs")
+
+    # 5) Open ended: N+ years or at least N years or N or more years
+    m = re.search(r'(?:at least\s+)?\b(\d+)\s*(?:\+|\s+or\s+more)\s*years?', text)
+    if m:
+        n = int(m.group(1))
+        return (n, 99, f"{n}+ yrs")
+
+    # 6) Single year requirement (e.g. "2 years of experience", "2 years of information systems experience")
+    m = re.search(r'\b(\d+)\s*\+?\s*years?\s*(?:of\s*)?(?:[a-z\s,-]{0,35})?experience\b', text)
+    if m:
+        n = int(m.group(1))
+        return (n, n, f"{n} yrs")
+
+    # Catch-all N+ year
+    m = re.search(r'\b(\d+)\s*\+\s*years?', text)
     if m:
         n = int(m.group(1))
         return (n, 99, f"{n}+ yrs")
