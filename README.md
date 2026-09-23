@@ -1,6 +1,6 @@
-# 🤖 Universal Job Scraper — AI-Controlled
+# 🤖 Universal Job Scraper - AI-Controlled
 
-> You talk to the AI in chat. The AI does everything — runs the scraper, monitors for CAPTCHAs, reads the output, and reports matching jobs to you in a table. You never touch the terminal.
+> You talk to the AI in chat. The AI does everything - runs the scraper, monitors for CAPTCHAs, reads the output, and reports matching jobs to you in a table. You never touch the terminal.
 
 ---
 
@@ -53,7 +53,7 @@ playwright install chromium
 
 ---
 
-## Usage — Just Talk to the AI
+## Usage - Just Talk to the AI
 
 Tell the AI what you want in chat:
 
@@ -77,12 +77,12 @@ The AI always reports results in this table:
 | 2 | Business Technology Associate | Gurgaon | Fresh grad | Recent | ⭐⭐ Good | [Apply](url) |
 
 **Match scoring:**
-- ⭐⭐⭐ **Strong** — 0 yrs / entry-level / fresh grad / no experience required
-- ⭐⭐ **Good** — Meets most criteria, minor gap
-- ⭐ **Weak** — Partial match (reason noted)
-- ❓ — Experience requirement not found in description text
+- ⭐⭐⭐ **Strong** - 0 yrs / entry-level / fresh grad / no experience required
+- ⭐⭐ **Good** - Meets most criteria, minor gap
+- ⭐ **Weak** - Partial match (reason noted)
+- ❓ - Experience requirement not found in description text
 
-> **Note:** Experience is always extracted directly from description text — never inferred from the job title.
+> **Note:** Experience is always extracted directly from description text - never inferred from the job title.
 
 ---
 
@@ -129,7 +129,7 @@ universal-job-scraper/
 
 ## Supported Sites
 
-The scraper is **DOM-agnostic** — it uses JavaScript to harvest all `<a href>` links matching job URL patterns, so it works across different ATS platforms:
+The scraper is **DOM-agnostic** - it uses JavaScript to harvest all `<a href>` links matching job URL patterns, so it works across different ATS platforms:
 
 | ATS / Platform | Notes |
 |---------------|-------|
@@ -145,9 +145,9 @@ The scraper is **DOM-agnostic** — it uses JavaScript to harvest all `<a href>`
 
 ## Known Site-Specific Behavior
 
-### United Airlines (careers.united.com — Phenom ATS)
-- Fully JS-rendered SPA — uses `networkidle` + body text length polling
-- CAPTCHA may appear on description tabs — logged and skipped (data still saved)
+### United Airlines (careers.united.com - Phenom ATS)
+- Fully JS-rendered SPA - uses `networkidle` + body text length polling
+- CAPTCHA may appear on description tabs - logged and skipped (data still saved)
 - Experience format: `"Experience: 1+ year"` in body text
 
 ### ZS Careers (jobs.zs.com)
@@ -162,10 +162,10 @@ The scraper is **DOM-agnostic** — it uses JavaScript to harvest all `<a href>`
 | Problem | Fix |
 |---------|-----|
 | No jobs found | Filters may be too strict, or the page didn't fully load |
-| Jobs blocked (403 on descriptions) | Script falls back to partial text — still saves what it gets |
-| CAPTCHA | Solve it in the browser — AI will tell you in chat. Script resumes automatically |
+| Jobs blocked (403 on descriptions) | Script falls back to partial text - still saves what it gets |
+| CAPTCHA | Solve it in the browser - AI will tell you in chat. Script resumes automatically |
 | `playwright` not found | Run `playwright install chromium` |
-| Browser doesn't appear | Try running `launch.py` directly — it forces a visible Windows console |
+| Browser doesn't appear | Try running `launch.py` directly - it forces a visible Windows console |
 
 ---
 
