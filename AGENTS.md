@@ -4,6 +4,21 @@ This workspace contains a chat-controlled job scraper. The user never touches th
 
 ---
 
+## Trigger Rule — When to Run the Scraper
+
+Any message from the user that sounds like a casual job search request **always means: run scraper.py immediately**. Do not browse the web, do not use read_url, do not use a browser subagent to inspect the site first.
+
+Examples of trigger phrases:
+- "check X jobs for me"
+- "can you look at X careers"
+- "search X for fresher roles"
+- "what does X have open"
+- "any jobs at X?"
+
+**Action**: Construct the best filtered URL you can, run `scraper.py` as a background task, and let the headed browser handle the rest. The user can adjust filters visually in the browser if needed.
+
+---
+
 ## My Role
 
 - User tells me a company, role criteria, and preferences **in chat**
@@ -142,3 +157,10 @@ Agent: Reads file, matches against criteria, posts result table in chat
 - Standard Phenom ATS, loads reliably with networkidle
 - No login wall on job detail pages
 - Use URL: `https://jobs.zs.com/all/jobs?location=India&woe=12&regionCode=IN`
+
+### EXL Service (jobs.exlservice.com)
+- Uses Eightfold AI ATS
+- Career portal: `https://jobs.exlservice.com/`
+- For India/Gurugram/Noida, use: `https://jobs.exlservice.com/?location=Gurugram%2C+Haryana%2C+India&location=Noida%2C+Uttar+Pradesh%2C+India`
+- Job URLs follow pattern: `https://jobs.exlservice.com/jobs/<id>`
+- Eightfold renders via JS — use networkidle + body text polling fallback
