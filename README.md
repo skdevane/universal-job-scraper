@@ -117,7 +117,7 @@ data/analysis_<date>.md               ← Markdown analysis table (from analyze.
 universal-job-scraper/
 ├── scraper.py          ← Main scraper (Playwright, async, headed browser)
 ├── find_url.py         ← ATS URL resolver (pings ATS candidate URLs, uses cache)
-├── company_urls.csv    ← URL cache (stores pre-verified careers page URLs)
+├── company_urls.csv    ← URL + scraping notes cache (ats_type, notes per company)
 ├── analyze.py          ← Post-scrape analyzer (extracts YOE, scores matches, saves markdown)
 ├── launch.py           ← Windows launcher (spawns scraper in visible console, tails log)
 ├── requirements.txt    ← playwright>=1.44.0, aiohttp>=3.9.0
@@ -147,15 +147,16 @@ The scraper is **DOM-agnostic** - it uses JavaScript to harvest all `<a href>` l
 
 ## Known Site-Specific Behavior
 
-### United Airlines (careers.united.com - Phenom ATS)
-- Fully JS-rendered SPA - uses `networkidle` + body text length polling
-- CAPTCHA may appear on description tabs - logged and skipped (data still saved)
-- Experience format: `"Experience: 1+ year"` in body text
+All per-company quirks are stored in **`company_urls.csv`** — columns: `company`, `url`, `ats_type`, `notes`.
 
-### ZS Careers (jobs.zs.com)
-- Standard Phenom ATS, loads reliably
-- No login wall on job detail pages
-- Best URL: `https://jobs.zs.com/all/jobs?location=India&woe=12&regionCode=IN`
+This is the single source of truth. To check notes for a company, read the relevant row from the CSV. To add a new company's quirks, add a row — don't duplicate info into docs.
+
+| Company | ATS Type | Quick Notes |
+|---------|----------|-------------|
+| **United Airlines** | Phenom | JS SPA — networkidle wait required; experience in body text |
+| **ZS Careers** | Phenom | Standard, reliable; no login wall |
+| **EXL Service** | Oracle HCM | Tenant subdomain not guessable; SmartRecruiters false positive risk |
+| **Apple** | Custom | Job URLs: `/details/<ID>/<slug>`; filter `/locationPicker` links |
 
 ---
 

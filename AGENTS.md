@@ -65,8 +65,7 @@ Run as a background task (`IsDaemon=false`, `WaitMsBeforeAsync=5000`).
 - **Default Location**: Always default to **India** (Gurgaon, Pune, Bengaluru, Hyderabad, Noida, Chennai, etc.) unless the user explicitly specifies another country.
 - **Default Experience Level**: Target **Fresher / 0 years experience** (0-2 years entry-level).
 - Embed filters directly in the URL where possible (e.g., `?location=India&...`).
-- For ZS Careers, use: `https://jobs.zs.com/all/jobs?location=India&woe=12&regionCode=IN`
-- For United Airlines (Phenom/Workday), use filtered India careers page URL.
+- For known companies, `find_url.py` resolves the correct URL from `company_urls.csv` automatically.
 
 ---
 
@@ -170,27 +169,12 @@ Agent: Reads file, matches against criteria, posts result table in chat
 
 ## Site-Specific Scraping Notes
 
-### United Airlines (careers.united.com — Phenom ATS)
-- Job pages are a **fully JS-rendered SPA** — `domcontentloaded` fires before content loads
-- Must use `wait_until="networkidle"` + poll `body.innerText.length > 1500` before extracting
-- CAPTCHA may appear during description fetch; do **not** block on it — log and skip, data is still saved
-- Experience is often written as `"Experience: 1+ year"` in the job body (not in a structured field)
-- **"Associate" in title does NOT mean entry-level** — always read the description
-- Save happens immediately after all fetches complete, before browser teardown
+All per-company scraping quirks (ATS type, URL, known gotchas) are stored in **`company_urls.csv`** — the `notes` column is the single source of truth.
 
-### ZS Careers (jobs.zs.com)
-- Standard Phenom ATS, loads reliably with networkidle
-- No login wall on job detail pages
-- Use URL: `https://jobs.zs.com/all/jobs?location=India&woe=12&regionCode=IN`
+When encountering a known company, always read the `notes` field from the CSV row before scraping. Key things to look for:
+- ATS rendering behavior (SPA vs SSR, selector waits needed)
+- Experience string format in job descriptions
+- Links to filter out (noise links, location pickers)
+- Known false positives or redirect traps
 
-### EXL Service (Oracle HCM)
-- Uses **Oracle HCM** ATS (not SmartRecruiters or Eightfold)
-- Correct India URL: `https://fa-ewjt-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_2/jobs?location=India&locationId=300000000467203&locationLevel=country&mode=job-location`
-- Oracle HCM tenant subdomains (`fa-<id>.fa.ocs.oraclecloud.com`) are NOT guessable from company name — must be known in advance
-- `www.exlservice.com/careers` is just a redirect to the Oracle portal
-- **SmartRecruiters false positive**: `careers.smartrecruiters.com/<slug>` returns HTTP 200 for ANY slug even if company has no jobs there — do not trust SmartRecruiters HIGH confidence blindly; verify body has actual job listings
-
-### Apple Careers (jobs.apple.com)
-- Use URL: `https://jobs.apple.com/en-in/search?location=india-INDC`
-- Job detail URLs strictly follow `/details/<JOB_ID>/<SLUG>`
-- Filter out store/location picker links (`/locationPicker`, `/hvhapply`)
+To add a new company's quirks: update `company_urls.csv` with `ats_type` and `notes`. Do not add site-specific notes back into this file.
