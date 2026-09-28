@@ -13,10 +13,21 @@ You (chat) ──► AI constructs filtered URL
                    │
          Headed browser opens on your screen
                    │
+           Rejects all cookies automatically
+           (accepts only if no reject option)
+                   │
+         Waits for job cards to render in DOM
+         (SPA-safe: Eightfold, Phenom, Workday)
+                   │
           [If CAPTCHA] → AI alerts you in chat
           You solve it → script auto-resumes
                    │
-          Sweeps all listing pages (paginated)
+          Sweeps all listing pages
+          (Next / Load More / Show More Results)
+                   │
+       [If 0 jobs] → [DIAG] dump auto-fires
+       AI reads it → fixes URL pattern → re-runs
+       (no browser inspection needed)
                    │
        Fetches all job descriptions in parallel
        (up to 5 tabs simultaneously)
@@ -35,10 +46,13 @@ You (chat) ──► AI constructs filtered URL
 | Phase | What Happens | Who Does It |
 |-------|-------------|-------------|
 | 1 | Browser opens, navigates to filtered career URL | **Script** |
-| 2 | Detects CAPTCHA → pauses, notifies you in chat | **Script + You** |
-| 3 | Sweeps all pages, harvests job links | **Script** |
-| 4 | Parallel tabs fetch JS-rendered job descriptions | **Script** |
-| 5 | AI reads output, matches against your criteria, reports table | **AI** |
+| 2 | Rejects all cookies (accepts if no reject option) | **Script** |
+| 3 | Waits for job cards to hydrate in DOM (SPA-safe) | **Script** |
+| 4 | Detects CAPTCHA → pauses, notifies you in chat | **Script + You** |
+| 5 | Sweeps all pages, harvests job links | **Script** |
+| 6 | If 0 links: `[DIAG]` dump fires, AI fixes & re-runs | **Script + AI** |
+| 7 | Parallel tabs fetch JS-rendered job descriptions | **Script** |
+| 8 | AI reads output, matches against your criteria, reports table | **AI** |
 
 ---
 
@@ -88,16 +102,22 @@ The AI always reports results in this table:
 
 ## Output Files
 
-After each run, the scraper saves to three places:
+After each run, the scraper and analyzer save to:
 
 ```
-jobs_raw.json                          ← Latest run (always overwritten)
-data/<company>_jobs_<date>.json        ← Timestamped archive
-data/<company>_jobs_<date>.csv         ← CSV version for spreadsheets
-data/analysis_<date>.md               ← Markdown analysis table (from analyze.py)
+jobs_raw.json                          ← Latest run raw scrape (overwritten each run)
+data/<company>_jobs_<date>.json        ← Timestamped raw JSON archive
+data/<company>_jobs_<date>.csv         ← CSV version for spreadsheet analysis
+data/analysis_<date>.md               ← Full ranked markdown analysis (optional via --no-md)
 ```
 
-### JSON schema
+### Why the Analysis Markdown Report (`analysis_<date>.md`)?
+- **Full Catalog**: While the chat summary shows the top 10–15 curated matches, the `.md` report contains the exhaustive list of all scraped jobs (e.g. 300+ jobs) with direct apply links.
+- **Offline Reference**: Accessible anytime in your IDE or markdown viewer with `Ctrl+F` search capability.
+- **Diffing & History**: Dated filenames allow tracking new job openings week-over-week.
+- **Optional**: Pass `--no-md` to `analyze.py` if you only want the terminal/chat output without saving a file.
+
+### JSON Schema
 
 ```json
 [
@@ -115,44 +135,50 @@ data/analysis_<date>.md               ← Markdown analysis table (from analyze.
 
 ```
 universal-job-scraper/
-├── scraper.py          ← Main scraper (Playwright, async, headed browser)
-├── find_url.py         ← ATS URL resolver (pings ATS candidate URLs, uses cache)
-├── company_urls.csv    ← URL + scraping notes cache (ats_type, notes per company)
-├── analyze.py          ← Post-scrape analyzer (extracts YOE, scores matches, saves markdown)
+├── scraper.py          ← Main scraper (Playwright, async, headed browser, Shadow DOM support)
+├── find_url.py         ← ATS URL resolver (checks cache first, then pings candidate ATS endpoints)
+├── company_urls.csv    ← Verified URL cache + site-specific quirks (updated post-scrape)
+├── analyze.py          ← Post-scrape analyzer (extracts exact YOE, scores matches, generates markdown)
 ├── launch.py           ← Windows launcher (spawns scraper in visible console, tails log)
 ├── requirements.txt    ← playwright>=1.44.0, aiohttp>=3.9.0
 ├── jobs_raw.json       ← Output from latest scrape
-├── scraper_output.log  ← Live log tailed by AI during scrape
-├── AGENTS.md           ← AI agent behavior rules (how the AI operates this workspace)
+├── scraper_output.log  ← Live log tailed during scraping runs
+├── AGENTS.md           ← AI agent behavior rules and execution workflows
 └── data/               ← Timestamped archives (JSON, CSV, markdown analysis)
 ```
 
 ---
 
-## Supported Sites
+## Supported Sites & ATS Engines
 
-The scraper is **DOM-agnostic** - it uses JavaScript to harvest all `<a href>` links matching job URL patterns, so it works across different ATS platforms:
+The scraper is **DOM-agnostic** — it harvests all links matching job URL patterns, waits for SPA hydration, pierces Shadow DOM boundaries, and self-diagnoses on failure:
 
-| ATS / Platform | Notes |
-|---------------|-------|
-| **Phenom ATS** (ZS, United Airlines, etc.) | Full SPA support, `networkidle` wait |
-| **Workday** | Standard job URL pattern matched |
-| **Greenhouse** | `greenhouse.io` links matched |
-| **Lever** | `lever.co` links matched |
+| ATS / Platform | Capabilities & Notes |
+|---------------|----------------------|
+| **Amazon Jobs** (`amazon.jobs`) | Custom portal, paginated `/en/jobs/<ID>/<slug>` matching |
+| **Eightfold ATS** (American Express, etc.) | Shadow DOM piercing via Playwright locators; cookie reject; "Show More Results" pagination |
+| **Phenom ATS** (ZS, United Airlines, etc.) | Full SPA support, `networkidle` wait, body innerText polling |
+| **Oracle HCM** (EXL Service, Oracle Cloud) | Custom tenant subdomains, SPA container anchor harvest |
+| **Workday** (`myworkdayjobs.com`) | Standard job URL pattern matching |
+| **Greenhouse** (`job-boards.greenhouse.io`) | Clean link harvesting and description extraction |
+| **Lever** (`jobs.lever.co`) | Lever job postings matched |
 | **SmartRecruiters** | `smartrecruiters.com` links matched |
 | **Taleo** | `taleo.net` links matched |
-| Any other site | Generic fallback via body text polling |
+| **Custom** (Apple, etc.) | `/details/<id>` URL patterns matched |
+| **Any other site** | Generic fallback via body text polling + `[DIAG]` self-diagnosis |
 
 ---
 
 ## Known Site-Specific Behavior
 
-All per-company quirks are stored in **`company_urls.csv`** — columns: `company`, `url`, `ats_type`, `notes`.
+All verified per-company quirks are stored in **`company_urls.csv`** — columns: `company`, `url`, `ats_type`, `notes`.
 
-This is the single source of truth. To check notes for a company, read the relevant row from the CSV. To add a new company's quirks, add a row — don't duplicate info into docs.
+> **Note**: URLs are only cached in `company_urls.csv` *after* a successful scrape verifies them end-to-end.
 
 | Company | ATS Type | Quick Notes |
 |---------|----------|-------------|
+| **Amazon** | Custom | Custom `amazon.jobs` portal; `/en/jobs/<ID>/<slug>` links; numeric pagination |
+| **American Express** | Eightfold | Shadow DOM cards; Cookie reject; SPA wait; "Show More Results" pagination |
 | **United Airlines** | Phenom | JS SPA — networkidle wait required; experience in body text |
 | **ZS Careers** | Phenom | Standard, reliable; no login wall |
 | **EXL Service** | Oracle HCM | Tenant subdomain not guessable; SmartRecruiters false positive risk |
@@ -160,47 +186,64 @@ This is the single source of truth. To check notes for a company, read the relev
 
 ---
 
+## CLI Reference (Manual Usage)
+
+You can also run every tool directly from the terminal:
+
+### 1. Resolve Company URL (`find_url.py`)
+```bash
+python find_url.py --company "Amazon" --location "India"
+```
+- Checks `company_urls.csv` cache first (`CACHE ⚡`).
+- If not cached, pings 17 candidate ATS URLs in parallel and returns ranked confidence (`HIGH ✅`, `MEDIUM ⚠️`, `LOW 🔸`, `DEAD ❌`).
+
+### 2. Scrape Job Listings (`scraper.py`)
+```bash
+python scraper.py --url "<target-careers-url>" --company "<company-name>" --output jobs_raw.json
+```
+- `--url`: Target careers/search URL with location filters applied.
+- `--company`: Company name used for file naming and logging.
+- `--output`: Path to output JSON (default: `jobs_raw.json`).
+
+### 3. Analyze & Rank Jobs (`analyze.py`)
+```bash
+python analyze.py --input jobs_raw.json --max-yoe 2
+```
+- `--input`: Path to input scraped jobs JSON (default: `jobs_raw.json`).
+- `--max-yoe`: Maximum years of experience threshold to classify as "Good/Strong" match (default: `2`).
+- `--no-md`: Skip generating the `data/analysis_<date>.md` file on disk (outputs to console only).
+
+### 4. Windows Visible Console Launcher (`launch.py`)
+```bash
+python launch.py --url "<target-careers-url>" --company "<company-name>"
+```
+- Spawns scraper in a separate visible Windows console window while tailing the log in real time.
+
+---
+
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| No jobs found | Filters may be too strict, or the page didn't fully load |
-| Jobs blocked (403 on descriptions) | Script falls back to partial text - still saves what it gets |
-| CAPTCHA | Solve it in the browser - AI will tell you in chat. Script resumes automatically |
+| No jobs found | `[DIAG]` dump fires automatically — reads raw anchors and suggests selector / URL fixes |
+| Shadow DOM cards (e.g. Eightfold) | Playwright locators automatically pierce shadow DOM as fallback |
+| Jobs rendered as divs, not links | `[DIAG]` non-anchor dump identifies the element for custom extraction |
+| Jobs blocked (403 on descriptions) | Script falls back to partial text — still saves what it gets |
+| CAPTCHA | Solve it in the browser window — script polls every 3s and auto-resumes once cleared |
+| Cookie dialog blocking page | Script auto-dismisses (Reject All first, Accept as fallback) |
+| Page looks empty (SPA not hydrated) | Script waits up to 12s for job card elements before harvesting |
 | `playwright` not found | Run `playwright install chromium` |
-| Browser doesn't appear | Try running `launch.py` directly - it forces a visible Windows console |
+| Browser doesn't appear | Run `launch.py` directly to force a visible Windows console |
 
 ---
 
-## Manual Usage (without AI)
-
-You can also run the scripts directly:
-
-```bash
-# Scrape a company
-python scraper.py --url "https://jobs.zs.com/all/jobs?location=India&woe=12&regionCode=IN" --company "ZS"
-
-# Analyze results
-python analyze.py --input jobs_raw.json --max-yoe 2
-
-# Or use the Windows launcher (shows browser + tails log)
-python launch.py --url "https://jobs.zs.com/all/jobs" --company "ZS"
-```
-
-```bash
-# Other companies
-python scraper.py --url "https://www.mckinsey.com/careers/search-jobs" --company "McKinsey"
-python scraper.py --url "https://apply.deloitte.com/careers/SearchJobs" --company "Deloitte"
-```
-
----
-
-## Default Behavior (AI-controlled mode)
+## Default Behavior (AI-Controlled Mode)
 
 | Setting | Default |
 |---------|---------|
-| Location | **India** (Gurgaon, Pune, Bengaluru, Hyderabad, Noida, Chennai) |
+| Location | **India** (Gurgaon, Pune, Bengaluru, Hyderabad, Noida, Chennai, Mumbai) |
 | Experience target | **Fresher / 0–2 years** |
-| Parallel tabs | 5 simultaneous |
+| Parallel tabs | 5 simultaneous Playwright tabs |
 | Max pages | 30 (safety cap) |
 | Description cap | 8000 chars per job |
+

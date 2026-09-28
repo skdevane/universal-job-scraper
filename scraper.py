@@ -57,6 +57,74 @@ MAX_PAGES          = 30         # Safety cap on pagination
 CAPTCHA_POLL_SEC   = 3          # Polling interval while waiting for CAPTCHA solve
 
 
+# --- COOKIE CONSENT DISMISSER ------------------------------------------------
+
+# Prefer Reject All — non-essential cookies don't affect scraping.
+# Accept All is a last-resort fallback for sites with no reject option.
+COOKIE_REJECT_SELECTORS = [
+    "button:has-text('Reject All')",
+    "button:has-text('Reject all')",
+    "button:has-text('Decline All')",
+    "button:has-text('Decline all')",
+    "button:has-text('Decline')",
+    "button:has-text('No Thanks')",
+    "button:has-text('No, thanks')",
+    "button:has-text('Necessary Only')",
+    "button:has-text('Only Necessary')",
+    "button:has-text('Use Necessary Cookies Only')",
+    "button:has-text('Essential Only')",
+    "[aria-label='Reject All']",
+    "[aria-label='Decline']",
+    "[id*='reject']",
+    "[id*='decline']",
+]
+
+COOKIE_ACCEPT_FALLBACK_SELECTORS = [
+    "button:has-text('Accept All')",
+    "button:has-text('Accept Cookies')",
+    "button:has-text('Accept all cookies')",
+    "button:has-text('Allow All')",
+    "button:has-text('I Accept')",
+    "button:has-text('Agree')",
+    "button:has-text('OK')",
+    "[aria-label='Accept All']",
+    "[id*='accept']",
+    "[class*='cookie'] button:has-text('Accept')",
+]
+
+async def dismiss_cookie_dialog(page: Page):
+    """
+    Dismisses cookie consent dialogs. Always tries to Reject All first.
+    Falls back to Accept All only if no reject option exists (so page isn't blocked).
+    Silent if no dialog is found.
+    """
+    # Try reject first
+    for sel in COOKIE_REJECT_SELECTORS:
+        try:
+            btn = page.locator(sel).first
+            if await btn.is_visible(timeout=2000):
+                await btn.click()
+                await page.wait_for_timeout(1500)
+                print("  >> Cookie dialog dismissed (Rejected All).")
+                sys.stdout.flush()
+                return
+        except Exception:
+            continue
+
+    # Fallback: accept if no reject option found (prevents page from being blocked)
+    for sel in COOKIE_ACCEPT_FALLBACK_SELECTORS:
+        try:
+            btn = page.locator(sel).first
+            if await btn.is_visible(timeout=2000):
+                await btn.click()
+                await page.wait_for_timeout(1500)
+                print("  >> Cookie dialog dismissed (Accepted — no reject option found).")
+                sys.stdout.flush()
+                return
+        except Exception:
+            continue
+
+
 # --- CAPTCHA DETECTION --------------------------------------------------------
 
 CAPTCHA_SIGNALS = [
@@ -97,6 +165,44 @@ async def wait_for_captcha_resolution(page: Page):
             break
 
 
+# --- SPA JOB CARD WAIT -------------------------------------------------------
+
+# Selectors that indicate job cards have rendered in the DOM.
+# Ordered from most-specific to generic — first match wins.
+JOB_CARD_SELECTORS = [
+    "a[href*='/job/']",          # Generic: any anchor with /job/ in href
+    "a[href*='/jobs/']",         # Generic: any anchor with /jobs/ in href
+    "[class*='job-card']",       # Common class pattern
+    "[class*='jobCard']",
+    "[data-ph-at-id*='job']",    # Phenom ATS
+    "[class*='job-list'] a",
+    "[class*='jobsList'] a",
+    "[class*='job-result'] a",
+    "article a",                 # Generic article links
+]
+
+async def wait_for_jobs_to_render(page: Page, timeout_ms: int = 12000):
+    """
+    Polls until job card elements appear in the DOM.
+    Solves Eightfold/Phenom/Workday SPA hydration delay.
+    Returns True if job cards found, False if timed out (page may still have jobs via JS).
+    """
+    print("  >> Waiting for job cards to render in DOM...")
+    sys.stdout.flush()
+    for sel in JOB_CARD_SELECTORS:
+        try:
+            await page.wait_for_selector(sel, timeout=timeout_ms)
+            count = await page.locator(sel).count()
+            print(f"  >> Job cards detected via '{sel}' ({count} elements).")
+            sys.stdout.flush()
+            return True
+        except Exception:
+            continue
+    print("  >> [WARN] No job card selector matched within timeout. Harvesting anyway.")
+    sys.stdout.flush()
+    return False
+
+
 # --- PHASE 1: LAUNCH & NAVIGATE -----------------------------------------------
 
 async def launch_and_navigate(url: str):
@@ -133,7 +239,14 @@ async def launch_and_navigate(url: str):
     await page.bring_to_front()    # Force window to foreground
     await page.goto(url, wait_until="domcontentloaded", timeout=30000)
     await page.bring_to_front()    # Bring to front again after navigation
-    await page.wait_for_timeout(2000)
+    await page.wait_for_timeout(3000)
+
+    # Dismiss cookie/consent dialog before anything else
+    await dismiss_cookie_dialog(page)
+    await page.wait_for_timeout(1500)
+
+    # Wait for SPA to hydrate job cards into the DOM
+    await wait_for_jobs_to_render(page)
 
     if await detect_captcha(page):
         await wait_for_captcha_resolution(page)
@@ -145,7 +258,7 @@ async def launch_and_navigate(url: str):
 
 # --- PHASE 2: HARVEST JOB LINKS -----------------------------------------------
 
-async def harvest_links(page: Page) -> list[dict]:
+async def harvest_links(page: Page, base_url: str = "") -> list[dict]:
     print("\n  --- Phase 2: Harvesting Links ---")
     all_jobs = []
     seen_hrefs = set()
@@ -163,11 +276,41 @@ async def harvest_links(page: Page) -> list[dict]:
 
         raw_links = await page.evaluate("""
             () => {
+                // Standard pass: all anchors on the page
                 const anchors = Array.from(document.querySelectorAll('a[href]'));
-                return anchors.map(a => ({
+                const standard = anchors.map(a => ({
                     href: a.href,
                     text: (a.innerText || a.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 150)
                 })).filter(a => a.href && a.text.length > 3);
+
+                // Oracle HCM / AmEx extra pass: find anchors inside SPA containers
+                // that are sometimes missed by the global querySelectorAll
+                const spaRoots = [
+                    '.search-jobs-root-container',
+                    '[class*="job-list"]',
+                    '[class*="jobs-list"]',
+                    '[class*="jobsList"]',
+                    '[class*="job-card"]',
+                    '[class*="jobCard"]',
+                    '[class*="result-list"]',
+                ];
+                const extra = [];
+                const seen = new Set(standard.map(l => l.href));
+                for (const rootSel of spaRoots) {
+                    const root = document.querySelector(rootSel);
+                    if (!root) continue;
+                    const innerAnchors = Array.from(root.querySelectorAll('a[href]'));
+                    for (const a of innerAnchors) {
+                        if (!seen.has(a.href)) {
+                            seen.add(a.href);
+                            extra.push({
+                                href: a.href,
+                                text: (a.innerText || a.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 150)
+                            });
+                        }
+                    }
+                }
+                return [...standard, ...extra].filter(a => a.href && a.text.length > 3);
             }
         """)
 
@@ -179,7 +322,68 @@ async def harvest_links(page: Page) -> list[dict]:
                 all_jobs.append({"title": link["text"], "url": href, "description": ""})
                 new_count += 1
 
+        # --- SHADOW DOM / IFRAME FALLBACK ---
+        # If JS querySelectorAll found 0 job links, try Playwright locators which
+        # pierce shadow DOM automatically (handles Eightfold ATS and similar).
+        if new_count == 0:
+            try:
+                job_anchors = page.locator("a[href*='/job/'], a[href*='/jobs/']")
+                count = await job_anchors.count()
+                for i in range(count):
+                    el = job_anchors.nth(i)
+                    try:
+                        href = await el.get_attribute("href")
+                        text = (await el.inner_text()).strip().replace("\n", " ")[:150]
+                        if href and href not in seen_hrefs and is_job_link(href):
+                            # Resolve relative URLs
+                            if href.startswith("/"):
+                                from urllib.parse import urlparse
+                                parsed = urlparse(base_url)
+                                href = f"{parsed.scheme}://{parsed.netloc}{href}"
+                            seen_hrefs.add(href)
+                            all_jobs.append({"title": text or f"Job {i+1}", "url": href, "description": ""})
+                            new_count += 1
+                    except Exception:
+                        continue
+                if new_count > 0:
+                    print(f"     +{new_count} via Playwright shadow-DOM locator (total: {len(all_jobs)})")
+            except Exception as e:
+                print(f"  [WARN] Playwright locator fallback failed: {e}")
+
         print(f"     +{new_count} new links (total so far: {len(all_jobs)})")
+
+        # --- DIAGNOSTIC DUMP (only on first page with 0 hits) ---
+        # Printed when is_job_link() filtered everything out.
+        # Lets the agent fix URL patterns without a browser subagent.
+        if new_count == 0 and page_num == 1 and len(all_jobs) == 0:
+            print(f"  [DIAG] 0 job links matched. {len(raw_links)} raw <a> tags on page.")
+            print("  [DIAG] Dumping first 40 raw hrefs to help debug is_job_link():")
+            seen_dump = set()
+            for link in raw_links:
+                h = link["href"]
+                if h not in seen_dump:
+                    seen_dump.add(h)
+                    print(f"         {h[:120]}  |  {link['text'][:60]}")
+                if len(seen_dump) >= 40:
+                    break
+            # Also scan for non-anchor job elements (divs with click handlers)
+            non_anchor_jobs = await page.evaluate("""
+                () => {
+                    const candidates = Array.from(document.querySelectorAll(
+                        '[class*=\"job\"], [data-job], [data-requisition], [role=\"listitem\"]'
+                    ));
+                    return candidates.slice(0, 10).map(el => ({
+                        tag: el.tagName,
+                        cls: el.className.slice(0, 80),
+                        text: (el.innerText || '').slice(0, 80)
+                    }));
+                }
+            """)
+            if non_anchor_jobs:
+                print("  [DIAG] Non-anchor job-like elements found (jobs may use divs not <a> tags):")
+                for el in non_anchor_jobs:
+                    print(f"         <{el['tag']}> class='{el['cls']}' | '{el['text']}'")
+
         sys.stdout.flush()
 
         went_next = await try_next_page(page)
@@ -197,7 +401,10 @@ def is_job_link(href: str) -> bool:
     href_lower = href.lower()
     job_kws  = ["/job/", "/jobs/", "/details/", "/position/", "/opening/",
                 "/requisition/", "lever.co/", "greenhouse.io/", "workday.com/",
-                "taleo.net/", "smartrecruiters.com/"]
+                "taleo.net/", "smartrecruiters.com/",
+                # Oracle HCM (American Express, Oracle Cloud Recruiting)
+                "/en/sites/",
+                ]
     skip_kws = ["javascript:", "mailto:", "tel:", "linkedin.com/company",
                 "twitter.com", "facebook.com", "instagram.com",
                 "/about", "/contact", "/privacy", "/terms", "/login",
@@ -205,7 +412,11 @@ def is_job_link(href: str) -> bool:
                 "/categories", "/locations", "all/jobs?", "all/jobs#",
                 "/hvhapply", "/jobcart", "/home", "/benefits", "/pilots",
                 "/students", "/united-pathways", "/flight-attendant", "/military",
-                "/search-results"]
+                "/search-results",
+                # Oracle HCM listing pages (not individual job pages)
+                "/en/sites/cx_1/jobs", "/en/sites/cx_1/join", "/en/sites/cx_1#",
+                "/sitemaps/", "/join-talent-community",
+                ]
     if any(s in href_lower for s in skip_kws):
         return False
     if href_lower.rstrip("/").endswith("/all/jobs") or href_lower.rstrip("/").endswith("/search"):
@@ -237,6 +448,9 @@ async def try_next_page(page: Page) -> bool:
         "button:has-text('Next')", "a:has-text('Next')",
         "[aria-label='Next page']", "[aria-label='Next']",
         "button:has-text('Load More')", "button:has-text('Show More')",
+        "button:has-text('Show More Results')",       # American Express (Eightfold ATS)
+        "button:has-text('Show more results')",
+        "button:has-text('View More')", "button:has-text('See More')",
         ".pagination-next", ".next-page",
         "[data-ph-at-id='pagination-next']",
         "li.pagination__next a",
@@ -405,7 +619,7 @@ async def main():
 
     try:
         # Phase 2: Harvest all job links
-        jobs = await harvest_links(page)
+        jobs = await harvest_links(page, base_url=args.url)
 
         if not jobs:
             print("\n  NO_JOBS_FOUND -- filters may be too strict or page did not load.")

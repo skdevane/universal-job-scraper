@@ -6,7 +6,7 @@ This workspace contains a chat-controlled job scraper. The user never touches th
 
 ## Trigger Rule — When to Run the Scraper
 
-Any message from the user that sounds like a casual job search request **always means: run scraper.py immediately**. Do not browse the web, do not use read_url, do not use a browser subagent to inspect the site first.
+Any message from the user that sounds like a casual job search request **always means: run scraper.py immediately**. Do not browse the web, do not use read_url, **do not use a browser subagent to inspect the site first** (slow — only as last resort after 2 failed fix attempts).
 
 Examples of trigger phrases:
 - "check X jobs for me"
@@ -46,7 +46,10 @@ This checks `company_urls.csv` cache first. If not found, it pings candidate ATS
 - **LOW** (🔸) — Redirected to wrong domain or suspicious.
 - **DEAD** (❌) — 404 or connection error.
 
-Pick the **best HIGH or MEDIUM** URL, update `company_urls.csv`, and pass it to `scraper.py`.
+Pick the **best HIGH or MEDIUM** URL, and pass it to `scraper.py`.
+
+> **CRITICAL URL CACHE RULE**:
+> Only add or update a company entry in `company_urls.csv` **AFTER a successful scrape (`SCRAPE_COMPLETE`)** has verified that the URL works end-to-end. Never add or update URLs speculatively before scraping.
 
 If **NO_URL_FOUND** or all results are DEAD/LOW: **ask the user in chat**:
 > "I couldn't find the careers page URL for [company] automatically. Could you paste the link to their jobs page? (e.g. the URL you see when you're on their careers/jobs listing)"
@@ -71,14 +74,33 @@ Run as a background task (`IsDaemon=false`, `WaitMsBeforeAsync=5000`).
 
 ## Monitoring the Script Output
 
+**MANDATORY: Always set a 90-second auto-monitor timer immediately after launching scraper.py.**
+
+```
+After run_command(scraper.py ..., IsDaemon=false, WaitMsBeforeAsync=5000):
+  → set schedule(DurationSeconds=90, TimerCondition=<task-id>,
+      Prompt="Check task-<id> status. If SCRAPE_COMPLETE, read jobs_raw.json
+              and run analyze.py. If still running, report progress and set
+              another 90s timer.")
+```
+
+Never make the user ask "?" or "what's happening?" — the timer ensures you always report back proactively.
+
 Watch the task log file continuously. Key signals to look for:
 
 | Signal in Output | What to Do |
 |-----------------|------------|
 | `CAPTCHA_DETECTED` | **Immediately tell user in chat**: "🛑 CAPTCHA detected — please solve it in the browser window on your screen. The script will resume automatically." |
-| `NO_JOBS_FOUND` | Tell user no results — suggest adjusting filters or URL |
-| `SCRAPE_COMPLETE` | Read `jobs_raw.json` and proceed to analysis |
-| `HTTP 403` on many jobs | Background fetching is blocked — consider Playwright fallback |
+| `Cookie dialog dismissed (Rejected All)` | ✅ Normal — cookie dialog was auto-dismissed. No action needed. |
+| `Cookie dialog dismissed (Accepted — no reject option found)` | ✅ Normal fallback — site had no Reject option. No action needed. |
+| `Job cards detected via '...'` | ✅ SPA hydrated — jobs found in DOM before harvest. Good sign. |
+| `[WARN] No job card selector matched` | ⚠️ SPA may not have rendered — harvest proceeds anyway. Watch for 0 links. |
+| `[DIAG] 0 job links matched` | 🔍 **Read the dump**. Fix `is_job_link()` or URL pattern. Re-run. No browser subagent needed. |
+| `Non-anchor job-like elements found` | Jobs rendered as `<div>` not `<a>` — scraper needs a custom extractor for this ATS. |
+| `NO_JOBS_FOUND` | After DIAG steps exhausted — tell user, suggest adjusting URL or ask for the correct URL. |
+| `SCRAPE_COMPLETE` | Read `jobs_raw.json` and proceed to analysis. |
+| `HTTP 403` on many jobs | Background fetching is blocked — consider Playwright fallback. |
+
 
 ---
 
@@ -125,19 +147,27 @@ Always include the direct job URL as the Apply link.
 ```
 User: "Search <company>, <location>, <role/criteria>"
   ↓
-Agent: Constructs filtered URL
+Agent: find_url.py → resolve ATS URL (cache first, then ping)
   ↓
-Agent: Runs scraper.py (background task)
+Agent: scraper.py → headed browser opens
   ↓
-Script: Opens headed browser, navigates, auto-detects CAPTCHA
+Script: Rejects all cookies automatically (Accepts if no reject option)
+  ↓
+Script: Waits for job cards to hydrate in DOM (SPA-safe)
   ↓
 [If CAPTCHA] → Agent tells user → User solves → Script auto-resumes
   ↓
-Script: Sweeps all pages, parallel-fetches all job descriptions
+Script: Sweeps all pages (Next / Load More / Show More Results)
   ↓
-Script: Saves jobs_raw.json, prints SCRAPE_COMPLETE
+[If 0 links] → [DIAG] dump fires → Agent reads, fixes is_job_link() → re-run
+              → If still 0 after 2 fixes → ask user for correct URL
+              → Browser subagent ONLY if URL is confirmed correct but page still broken
   ↓
-Agent: Reads file, matches against criteria, posts result table in chat
+Script: Parallel-fetches all job descriptions (5 tabs)
+  ↓
+Script: Saves jobs_raw.json → SCRAPE_COMPLETE
+  ↓
+Agent: Reads file, matches criteria, posts table in chat
 ```
 
 ---
@@ -160,10 +190,25 @@ Agent: Reads file, matches against criteria, posts result table in chat
 
 ## Known Behaviors
 
+- **Cookie handling**: Always tries Reject All first; falls back to Accept only if no reject option exists
+- **SPA hydration wait**: After cookie dismiss, polls up to 12s for job card selectors before harvesting — prevents empty harvests on Eightfold, Phenom, Workday
+- **Self-diagnosing**: When 0 links found, `[DIAG]` auto-dumps all raw `<a>` hrefs + non-anchor job elements so the agent can fix `is_job_link()` without a browser subagent
+- **Pagination**: Handles Next, Load More, Show More Results, numbered pages
 - The script polls every 3 seconds to detect CAPTCHA resolution — no user terminal input needed
 - Session cookies from the headed browser are reused for background fetching (reduces 403s)
 - Link extraction is DOM-agnostic — uses JS to harvest all `<a href>` tags that match job URL patterns
 - Descriptions are capped at 8000 chars per job to stay within context limits
+
+## Failure Escalation Policy (0 jobs found)
+
+```
+1. Read [DIAG] dump → fix is_job_link() or URL → re-run          (fast, ~1 min)
+2. Try without location filter → confirm jobs exist at all         (fast, ~1 min)
+3. Ask user to paste the correct careers URL                       (instant)
+4. Browser subagent inspection                                     (slow, last resort only)
+```
+
+Never jump to step 4 before exhausting steps 1–3.
 
 ---
 
@@ -177,4 +222,4 @@ When encountering a known company, always read the `notes` field from the CSV ro
 - Links to filter out (noise links, location pickers)
 - Known false positives or redirect traps
 
-To add a new company's quirks: update `company_urls.csv` with `ats_type` and `notes`. Do not add site-specific notes back into this file.
+To add a new company's quirks: update `company_urls.csv` with `ats_type` and `notes` **only after a successful scrape run**. Do not add unverified URLs beforehand. Do not add site-specific notes back into this file.

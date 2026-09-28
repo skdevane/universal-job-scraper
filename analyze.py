@@ -120,18 +120,55 @@ def analyze(input_path: str, max_yoe: int, save_md: bool):
     results = []
 
     for job in data:
-        title = job["title"]
-        url   = job["url"]
+        title = job.get("title", "")
+        url   = job.get("url", "")
         desc  = job.get("description", "")
 
+        # Extract real title if title is a placeholder like 'Job 1', 'Job 2', or empty
+        if not title or re.match(r'^Job\s+\d+$', title, re.IGNORECASE):
+            # Try Eightfold pattern: 'View More Jobs <Title> <Location> Apply Now'
+            tm = re.search(r'(?:View More Jobs\s+|Jobs\s+)([A-Za-z0-9\s\-/&,\(\)\.\+]+?)\s+([A-Za-z\s,]+(?:India|Spain|United States|UK|London|Bengaluru|Gurgaon|Gurugram|Noida|Pune|Hyderabad|Chennai|Hybrid|Remote)[^\n\r]*?)\s+Apply Now', desc)
+            if tm:
+                title = tm.group(1).strip()
+            else:
+                # Try before 'Apply Now' or 'JOB DESCRIPTION'
+                tm2 = re.search(r'(?:^|\n)([A-Z][A-Za-z0-9\s\-/&,\(\)\.\+]{4,60})\s+(?:Apply Now|JOB DESCRIPTION)', desc)
+                if tm2:
+                    title = tm2.group(1).strip()
+
+        # Clean title artifacts
+        title = re.sub(r'^(?:Skip to main content\.?\s*)?(?:About Team Amex\s*)?(?:Career Areas\s*)?(?:Locations\s*)?(?:Students\s*)?(?:Jobs\s*)?(?:American English\s*)?(?:View More Jobs\s*)+', '', title, flags=re.IGNORECASE).strip()
+        title = re.sub(r'\s*-\s*$', '', title).strip()
+        if not title or title.lower() in ["american", "american english", "jobs"]:
+            # Fallback search inside desc
+            fb = re.search(r'View More Jobs\s+([A-Za-z0-9\s\-/&,\(\)\.\+]+?)(?:\s+Bengaluru|\s+Gurgaon|\s+Gurugram|\s+Noida|\s+Pune|\s+Mumbai|\s+Hyderabad|\s+Chennai|\s+India|\s+Apply Now)', desc, re.IGNORECASE)
+            if fb:
+                title = fb.group(1).strip()
+            else:
+                title = job.get("title", "Job")
+
         # Extract location
-        loc_m = re.search(r'Location\s+([^\n]+?(?:India|Haryana|Maharashtra|Karnataka)[^\n]*)', desc)
-        location = loc_m.group(1).strip() if loc_m else "India"
-        location = (location
-                    .replace("Gurugram, Haryana, India", "Gurgaon")
-                    .replace("Mumbai, Maharashtra, India", "Mumbai")
-                    .replace("Pune, Maharashtra, India", "Pune")
-                    .replace("Bengaluru, Karnataka, India", "Bengaluru"))
+        loc_m = re.search(r'Location\s+([^\n]+?(?:India|Haryana|Maharashtra|Karnataka|Bengaluru|Gurgaon|Gurugram|Pune|Noida|Hyderabad|Chennai)[^\n]*)', desc, re.IGNORECASE)
+        if not loc_m:
+            loc_m = re.search(r'\b(Bengaluru|Gurgaon|Gurugram|Noida|Pune|Mumbai|Hyderabad|Chennai|Delhi|India)\b[^\n\r]*?(?:India)?', desc, re.IGNORECASE)
+
+        if loc_m:
+            loc_str = loc_m.group(0) if loc_m.lastindex == 0 else loc_m.group(1)
+            location = (loc_str.strip()
+                        .replace("Gurugram, Haryana, India", "Gurgaon")
+                        .replace("Gurugram", "Gurgaon")
+                        .replace("Mumbai, Maharashtra, India", "Mumbai")
+                        .replace("Pune, Maharashtra, India", "Pune")
+                        .replace("Bengaluru, Karnataka, India", "Bengaluru")
+                        .replace("Karnataka, India", "Bengaluru")
+                        .replace("Haryana, India", "Gurgaon"))
+            # Keep clean city name
+            for city in ["Bengaluru", "Gurgaon", "Pune", "Mumbai", "Hyderabad", "Noida", "Chennai", "India"]:
+                if city.lower() in location.lower():
+                    location = city
+                    break
+        else:
+            location = "India"
 
         # Extract posted date
         date_m = re.search(r'Posted Date\s+([\d/]+)', desc)
@@ -140,7 +177,7 @@ def analyze(input_path: str, max_yoe: int, save_md: bool):
         yoe_min, yoe_max, yoe_label = extract_experience(desc)
         stars_word, label = match_score(yoe_min, yoe_max, max_yoe)
         stars = {"Strong": "Strong", "Good": "Good", "Weak": "Weak", "Unknown exp": "?"}.get(stars_word, "?")
-        category = "Tech" if is_tech(title) else "Non-Tech"
+        category = "Tech" if is_tech(title) or is_tech(desc[:500]) else "Non-Tech"
 
         results.append({
             "title": title, "url": url, "location": location,
