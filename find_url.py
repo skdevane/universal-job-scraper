@@ -22,6 +22,8 @@ import sys
 import urllib.parse
 from dataclasses import dataclass
 
+import csv
+from pathlib import Path
 import aiohttp
 
 # Fix Windows console encoding (CP1252 can't print emoji)
@@ -210,6 +212,35 @@ def print_table(results: list[Result], company: str):
     print()
 
 
+CACHE_FILE = Path("company_urls.csv")
+
+def get_cached_url(company: str) -> str:
+    if not CACHE_FILE.exists():
+        return ""
+    comp_clean = company.strip().lower()
+    with open(CACHE_FILE, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row.get("company", "").strip().lower() == comp_clean:
+                return row.get("url", "").strip()
+    return ""
+
+def update_cache(company: str, url: str):
+    entries = {}
+    if CACHE_FILE.exists():
+        with open(CACHE_FILE, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("company"):
+                    entries[row["company"].strip().lower()] = (row["company"], row["url"])
+    entries[company.strip().lower()] = (company, url)
+    with open(CACHE_FILE, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["company", "url"])
+        for comp, u in entries.values():
+            writer.writerow([comp, u])
+
+
 def main():
     parser = argparse.ArgumentParser(description="Resolve the correct ATS careers URL for a company")
     parser.add_argument("--company", required=True,  help="Company display name (e.g. 'EXL Service')")
@@ -217,6 +248,18 @@ def main():
     parser.add_argument("--location",required=False, default="India", help="Location hint (informational)")
     parser.add_argument("--best",    action="store_true", help="Print only the best URL (for agent parsing)")
     args = parser.parse_args()
+
+    # Check cache first
+    cached_url = get_cached_url(args.company)
+    if cached_url:
+        print(f"\n  [CACHE HIT] Found URL for '{args.company}' in company_urls.csv:")
+        print(f"  {cached_url}\n")
+        if args.best:
+            print(cached_url)
+        else:
+            print(f"  >> BEST PICK: [CACHE] {cached_url}")
+            print(f"     Pass this URL to scraper.py --url \"{cached_url}\"\n")
+        return
 
     # Derive slug from company name if not provided
     slug      = args.slug or re.sub(r"[^a-z0-9]", "", args.company.lower())

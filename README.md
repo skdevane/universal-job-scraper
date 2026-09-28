@@ -116,6 +116,8 @@ data/analysis_<date>.md               ← Markdown analysis table (from analyze.
 ```
 universal-job-scraper/
 ├── scraper.py          ← Main scraper (Playwright, async, headed browser)
+├── find_url.py         ← ATS URL resolver (pings ATS candidate URLs, uses cache)
+├── company_urls.csv    ← URL cache (stores pre-verified careers page URLs)
 ├── analyze.py          ← Post-scrape analyzer (extracts YOE, scores matches, saves markdown)
 ├── launch.py           ← Windows launcher (spawns scraper in visible console, tails log)
 ├── requirements.txt    ← playwright>=1.44.0, aiohttp>=3.9.0

@@ -39,13 +39,14 @@ Before running `scraper.py`, run `find_url.py` to identify the correct ATS URL:
 python find_url.py --company "EXL Service" --location "Gurugram"
 ```
 
-This pings ~15 candidate ATS URLs in parallel and returns a ranked confidence table:
+This checks `company_urls.csv` cache first. If not found, it pings candidate ATS URLs in parallel and returns a ranked confidence table:
+- **CACHE** (⚡) — Found in `company_urls.csv`. Fast & verified.
 - **HIGH** (✅) — 200 OK + body confirms careers page. Use this URL.
 - **MEDIUM** (⚠️) — 200 OK but couldn't fully confirm. Try in scraper, user can adjust.
 - **LOW** (🔸) — Redirected to wrong domain or suspicious.
 - **DEAD** (❌) — 404 or connection error.
 
-Pick the **best HIGH or MEDIUM** URL and pass it to `scraper.py`.
+Pick the **best HIGH or MEDIUM** URL, update `company_urls.csv`, and pass it to `scraper.py`.
 
 If **NO_URL_FOUND** or all results are DEAD/LOW: **ask the user in chat**:
 > "I couldn't find the careers page URL for [company] automatically. Could you paste the link to their jobs page? (e.g. the URL you see when you're on their careers/jobs listing)"
@@ -146,7 +147,8 @@ Agent: Reads file, matches against criteria, posts result table in chat
 
 | File | Purpose |
 |------|---------|
-| `find_url.py` | Pre-scrape URL resolver — pings candidate ATS URLs, returns best match |
+| `find_url.py` | Pre-scrape URL resolver — checks `company_urls.csv` cache & pings ATS URLs |
+| `company_urls.csv` | URL cache — stores pre-verified ATS careers URLs for fast lookup |
 | `scraper.py` | Main scraper — Playwright + async parallel fetch |
 | `analyze.py` | Post-scrape analyzer — extracts exact YOE from description text, outputs ranked table + markdown |
 | `launch.py` | Windows launcher — spawns scraper in visible console, tails log |
@@ -187,3 +189,8 @@ Agent: Reads file, matches against criteria, posts result table in chat
 - Oracle HCM tenant subdomains (`fa-<id>.fa.ocs.oraclecloud.com`) are NOT guessable from company name — must be known in advance
 - `www.exlservice.com/careers` is just a redirect to the Oracle portal
 - **SmartRecruiters false positive**: `careers.smartrecruiters.com/<slug>` returns HTTP 200 for ANY slug even if company has no jobs there — do not trust SmartRecruiters HIGH confidence blindly; verify body has actual job listings
+
+### Apple Careers (jobs.apple.com)
+- Use URL: `https://jobs.apple.com/en-in/search?location=india-INDC`
+- Job detail URLs strictly follow `/details/<JOB_ID>/<SLUG>`
+- Filter out store/location picker links (`/locationPicker`, `/hvhapply`)
